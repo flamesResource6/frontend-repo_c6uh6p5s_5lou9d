@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useRef } from 'react'
 
 const BACKEND = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000'
 
@@ -11,18 +11,36 @@ function AnalyzerForm() {
   const [result, setResult] = useState(null)
   const [error, setError] = useState('')
   const [history, setHistory] = useState([])
+  const [usePdf, setUsePdf] = useState(true)
+  const fileRef = useRef(null)
 
   const analyze = async () => {
     setLoading(true)
     setError('')
     setResult(null)
     try {
-      const res = await fetch(`${BACKEND}/analyze`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ resume_text: resume, job_description: job, email: email || undefined, premium })
-      })
-      if (!res.ok) throw new Error('Analysis failed')
+      let res
+      if (usePdf && fileRef.current?.files?.[0]) {
+        const fd = new FormData()
+        fd.append('file', fileRef.current.files[0])
+        if (job) fd.append('job_description', job)
+        if (email) fd.append('email', email)
+        fd.append('premium', String(premium))
+        res = await fetch(`${BACKEND}/analyze/pdf`, {
+          method: 'POST',
+          body: fd
+        })
+      } else {
+        res = await fetch(`${BACKEND}/analyze`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ resume_text: resume, job_description: job, email: email || undefined, premium })
+        })
+      }
+      if (!res.ok) {
+        const t = await res.text()
+        throw new Error(t || 'Analysis failed')
+      }
       const data = await res.json()
       setResult(data)
       await loadHistory()
@@ -50,13 +68,27 @@ function AnalyzerForm() {
     <span className="ml-2 inline-flex items-center text-xs px-2 py-0.5 rounded-full bg-amber-400/20 text-amber-200 ring-1 ring-amber-400/30">Premium</span>
   )
 
+  const Picker = (
+    <div className="bg-slate-800/60 border border-blue-500/20 rounded-xl p-4">
+      <div className="flex items-center justify-between mb-2">
+        <label className="flex items-center gap-2 text-blue-100 cursor-pointer select-none">
+          <input type="checkbox" checked={usePdf} onChange={() => setUsePdf(!usePdf)} className="accent-blue-400" />
+          <span>Upload PDF</span>
+        </label>
+        {usePdf && <span className="text-xs text-blue-300/70">PDF only</span>}
+      </div>
+      {usePdf ? (
+        <input ref={fileRef} type="file" accept="application/pdf" className="w-full text-blue-100 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-blue-600 file:text-white hover:file:bg-blue-500" />
+      ) : (
+        <textarea value={resume} onChange={e => setResume(e.target.value)} placeholder="Paste your resume text here..." rows={10} className="w-full bg-slate-900/60 border border-slate-700 rounded-lg p-3 text-blue-50 placeholder-blue-300/40 focus:outline-none focus:ring-2 focus:ring-blue-500"></textarea>
+      )}
+    </div>
+  )
+
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
       <div className="space-y-4">
-        <div className="bg-slate-800/60 border border-blue-500/20 rounded-xl p-4">
-          <label className="block text-sm text-blue-200 mb-2">Resume</label>
-          <textarea value={resume} onChange={e => setResume(e.target.value)} placeholder="Paste your resume here..." rows={10} className="w-full bg-slate-900/60 border border-slate-700 rounded-lg p-3 text-blue-50 placeholder-blue-300/40 focus:outline-none focus:ring-2 focus:ring-blue-500"></textarea>
-        </div>
+        {Picker}
 
         <div className="bg-slate-800/60 border border-blue-500/20 rounded-xl p-4">
           <label className="block text-sm text-blue-200 mb-2">Target Job Description (optional)</label>
@@ -76,7 +108,7 @@ function AnalyzerForm() {
         </div>
 
         <div className="flex gap-3">
-          <button onClick={analyze} disabled={loading || !resume} className="flex-1 bg-blue-500 hover:bg-blue-600 disabled:bg-blue-500/40 text-white font-semibold py-2.5 px-4 rounded-lg transition-colors">{loading ? 'Analyzing...' : 'Analyze Resume'}</button>
+          <button onClick={analyze} disabled={loading || (usePdf && !fileRef.current?.files?.[0]) || (!usePdf && !resume)} className="flex-1 bg-blue-500 hover:bg-blue-600 disabled:bg-blue-500/40 text-white font-semibold py-2.5 px-4 rounded-lg transition-colors">{loading ? 'Analyzing...' : 'Analyze Resume'}</button>
           <button onClick={loadHistory} className="px-4 py-2.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-blue-100">Load History</button>
         </div>
 
@@ -138,6 +170,57 @@ function AnalyzerForm() {
                 ))}
               </ul>
             </div>
+
+            {result.advanced && (
+              <div className="bg-slate-800/60 border border-blue-500/20 rounded-xl p-4">
+                <h4 className="text-blue-100 font-semibold mb-2">Advanced Insights {premium && premiumBadge}</h4>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm text-blue-100">
+                  <div>
+                    <p className="text-blue-300/80">Contact</p>
+                    <ul className="list-disc pl-5">
+                      <li>Emails: {result.advanced?.contact?.emails?.join(', ') || '—'}</li>
+                      <li>Phones: {result.advanced?.contact?.phones?.join(', ') || '—'}</li>
+                      <li>LinkedIn: {result.advanced?.contact?.linkedin?.join(', ') || '—'}</li>
+                    </ul>
+                  </div>
+                  <div>
+                    <p className="text-blue-300/80">Skills detected</p>
+                    <p>{(result.advanced?.skills_detected || []).join(', ') || '—'}</p>
+                  </div>
+                  <div>
+                    <p className="text-blue-300/80">Action verbs</p>
+                    <p>Count: {result.advanced?.action_verbs_count} • Used: {(result.advanced?.strong_verbs_used || []).join(', ') || '—'}</p>
+                  </div>
+                  <div>
+                    <p className="text-blue-300/80">Tense balance</p>
+                    <p>{result.advanced?.tense}</p>
+                  </div>
+                  <div>
+                    <p className="text-blue-300/80">Years coverage</p>
+                    <p>{result.advanced?.date_coverage?.min_year || '—'} - {result.advanced?.date_coverage?.max_year || '—'}</p>
+                    {result.advanced?.gaps?.length > 0 && (
+                      <ul className="list-disc pl-5 text-blue-200/80">
+                        {result.advanced.gaps.map((g, i) => (
+                          <li key={i}>Gap: {g.from} → {g.to} ({g.gap_years}y)</li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                  <div>
+                    <p className="text-blue-300/80">Degrees</p>
+                    <p>{(result.advanced?.degrees || []).join(', ') || '—'}</p>
+                  </div>
+                  <div>
+                    <p className="text-blue-300/80">Avg bullet length</p>
+                    <p>{result.advanced?.avg_bullet_length || '—'} chars</p>
+                  </div>
+                  <div>
+                    <p className="text-blue-300/80">Top missing from JD</p>
+                    <p>{(result.advanced?.top_missing_from_jd || []).join(', ') || '—'}</p>
+                  </div>
+                </div>
+              </div>
+            )}
 
             <div className="bg-slate-800/60 border border-blue-500/20 rounded-xl p-4">
               <h4 className="text-blue-100 font-semibold mb-2">Suggested Highlights</h4>
