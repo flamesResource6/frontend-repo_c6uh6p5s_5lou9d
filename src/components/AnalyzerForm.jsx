@@ -1,6 +1,13 @@
 import React, { useState, useRef } from 'react'
 
-const BACKEND = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000'
+// Backend URL resolution
+// 1) Use VITE_BACKEND_URL if provided at build time
+// 2) Else use window.BACKEND_URL if injected at runtime
+// 3) Else fall back to the live backend preview URL
+const ENV_BACKEND = import.meta.env.VITE_BACKEND_URL
+const BACKEND = (typeof window !== 'undefined' && window.BACKEND_URL)
+  || ENV_BACKEND
+  || 'https://ta-01kajm5efefn60prqp6afzn040-8000.wo-mrt29fl4ubgqzuzf4u6pk2kyc.w.modal.host'
 
 function AnalyzerForm() {
   const [resume, setResume] = useState('')
@@ -38,14 +45,21 @@ function AnalyzerForm() {
         })
       }
       if (!res.ok) {
-        const t = await res.text()
-        throw new Error(t || 'Analysis failed')
+        // Try to extract JSON error then text fallback
+        let msg = `Analysis failed (${res.status})`
+        try {
+          const data = await res.json()
+          msg = data?.detail || JSON.stringify(data)
+        } catch (_) {
+          try { msg = await res.text() } catch (_) {}
+        }
+        throw new Error(msg)
       }
       const data = await res.json()
       setResult(data)
       await loadHistory()
     } catch (e) {
-      setError(e.message)
+      setError(e.message || 'Something went wrong')
     } finally {
       setLoading(false)
     }
@@ -113,8 +127,12 @@ function AnalyzerForm() {
         </div>
 
         {error && (
-          <div className="bg-red-500/10 border border-red-500/30 text-red-200 rounded-lg px-4 py-2">{error}</div>
+          <div className="bg-red-500/10 border border-red-500/30 text-red-200 rounded-lg px-4 py-2 break-words">{String(error)}</div>
         )}
+
+        <div className="text-xs text-blue-300/60">
+          Using backend: <span className="font-mono">{BACKEND}</span>
+        </div>
       </div>
 
       <div className="space-y-4">
